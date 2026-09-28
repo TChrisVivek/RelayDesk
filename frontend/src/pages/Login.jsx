@@ -46,7 +46,7 @@ const Login = () => {
                     <div className="absolute inset-0 bg-gradient-to-r from-[#0f1117]/80 to-transparent"></div>
                 </div>
                 <div className="relative z-10 p-10 flex items-center gap-3">
-                    <CompanyLogo className="h-12 w-auto object-contain drop-shadow-xl saturate-150 contrast-125 hover:scale-105 transition-transform duration-300" defaultLogoType="white" />
+                    <CompanyLogo className="h-12 w-auto object-contain hover:scale-105 transition-transform duration-300" defaultLogoType="white" />
                 </div>
                 <div className="relative z-10 p-10 pb-16 max-w-lg">
                     <h1 className="text-5xl font-semibold text-white leading-[1.15] tracking-tight mb-4">
@@ -65,7 +65,7 @@ const Login = () => {
                         {/* Elegant background halo */}
                         <div className="absolute inset-0 bg-gradient-to-tr from-violet-500/10 via-blue-500/5 to-transparent blur-3xl rounded-full scale-150 pointer-events-none"></div>
                         <div className="relative p-2">
-                            <CompanyLogo className="h-16 w-auto object-contain drop-shadow-sm transition-transform duration-500 hover:scale-[1.02] filter invert opacity-90" defaultLogoType="dark" />
+                            <CompanyLogo className="h-16 w-auto object-contain drop-shadow-sm transition-transform duration-500 hover:scale-[1.02]" defaultLogoType="dark" />
                         </div>
                     </div>
 
