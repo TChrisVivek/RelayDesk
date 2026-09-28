@@ -80,10 +80,18 @@ api.interceptors.response.use(
                     };
                     else if (action === 'daily-logs') data = { projectPhase: 'Execution Phase', lastUpdated: 'Just now', logs: [] };
                     else if (action === 'expenses') data = mockExpenses;
-                    else if (action === 'blocks') data = [
-                        { _id: 'b1', name: 'Tower A - North Wing', description: 'Primary residential tower', status: 'In Progress', progress: 45 },
-                        { _id: 'b2', name: 'Tower B - South Wing', description: 'Secondary residential tower', status: 'Planning', progress: 0 }
-                    ];
+                    else if (action === 'blocks') {
+                        const blockId = parts[pIdx + 3];
+                        const blocks = [
+                            { _id: 'b1', name: 'Tower A - North Wing', description: 'Primary residential tower', status: 'In Progress', progress: 45 },
+                            { _id: 'b2', name: 'Tower B - South Wing', description: 'Secondary residential tower', status: 'Planning', progress: 0 }
+                        ];
+                        if (blockId) {
+                            data = blocks.find(b => b._id === blockId) || blocks[0];
+                        } else {
+                            data = blocks;
+                        }
+                    }
                     else data = []; // default for feed, tasks, pins, etc.
                 } else if (subPath) {
                     data = mockProjects.find(p => p._id === subPath) || mockProjects[0];
