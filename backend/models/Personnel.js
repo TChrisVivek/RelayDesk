@@ -1,0 +1,43 @@
+const mongoose = require('mongoose');
+
+const personnelSchema = new mongoose.Schema({
+    project_id: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Project',
+        required: false
+    },
+    name: {
+        type: String,
+        required: true
+    },
+    role: {
+        type: String,
+        required: true
+    },
+    email: {
+        type: String,
+        required: true
+    },
+    phone: {
+        type: String,
+        required: true
+    },
+    site: {
+        type: String,
+        required: true
+    },
+    status: {
+        type: String,
+        enum: ['On Site', 'Remote', 'Off Duty', 'On Leave'],
+        default: 'On Site'
+    },
+    leaveEndDate: {
+        type: Date,
+        default: null
+    },
+    avatar: String
+}, {
+    timestamps: true
+});
+
+module.exports = mongoose.model('Personnel', personnelSchema);

@@ -1,0 +1,243 @@
+const Material = require('../models/Material');
+const Project = require('../models/Project');
+const Expense = require('../models/Expense');
+const logActivity = require('../utils/activityLogger');
+
+const getProjectInventory = async (req, res) => {
+    const { id: projectId } = req.params;
+
+    try {
+        const materials = await Material.find({ project_id: projectId });
+
+        let totalValue = 0;
+        let totalSpent = 0;
+        let pendingOrders = 0;
+        let outOfStock = 0;
+        let monthlyInflow = 0;
+
+        const currentMonth = new Date().getMonth();
+        const currentYear = new Date().getFullYear();
+
+        const materialData = materials.map(mat => {
+            const matValue = mat.balance * mat.unitPrice;
+            totalValue += matValue;
+
+            if (mat.status === 'OUT OF STOCK') { outOfStock++; pendingOrders++; }
+            if (mat.status === 'LOW STOCK') pendingOrders++;
+
+            mat.logs.forEach(log => {
+                if (log.type === 'delivery') {
+                    totalSpent += (log.totalCost || 0);
+                    const logDate = new Date(log.date);
+                    if (logDate.getMonth() === currentMonth && logDate.getFullYear() === currentYear) {
+                        monthlyInflow += (log.totalCost || 0);
+                    }
+                }
+            });
+
+            return {
+                id: mat._id.toString(),
+                name: mat.name,
+                unit: mat.unit,
+                inflow: mat.inflow.toLocaleString('en-IN'),
+                outflow: mat.outflow.toLocaleString('en-IN'),
+                balance: mat.balance.toLocaleString('en-IN'),
+                value: `₹ ${matValue.toLocaleString('en-IN')}`,
+                status: mat.status,
+                iconType: mat.iconType,
+                lowStockThreshold: mat.lowStockThreshold ?? 50,
+                logs: mat.logs // Exposing the full chronological history to the frontend
+            };
+        });
+
+        let formattedInflow = `₹ ${monthlyInflow.toLocaleString('en-IN')}`;
+        if (monthlyInflow >= 10000000) {
+            formattedInflow = `₹ ${(monthlyInflow / 10000000).toFixed(2)} Cr`;
+        } else if (monthlyInflow >= 100000) {
+            formattedInflow = `₹ ${(monthlyInflow / 100000).toFixed(1)} L`;
+        } else if (monthlyInflow >= 1000) {
+            formattedInflow = `₹ ${(monthlyInflow / 1000).toFixed(1)} K`;
+        }
+
+        // Format totalSpent
+        let formattedTotalSpent = `₹ ${totalSpent.toLocaleString('en-IN')}`;
+        if (totalSpent >= 10000000) {
+            formattedTotalSpent = `₹ ${(totalSpent / 10000000).toFixed(2)} Cr`;
+        } else if (totalSpent >= 100000) {
+            formattedTotalSpent = `₹ ${(totalSpent / 100000).toFixed(2)} L`;
+        }
+
+        const realTimeInventoryData = {
+            lastUpdated: new Date().toLocaleString('en-IN'),
+            totalValue: `₹ ${totalValue.toLocaleString('en-IN')}`,
+            totalSpent: formattedTotalSpent,
+            totalSpentRaw: totalSpent,
+
+            summary: {
+                pendingOrders: pendingOrders.toString(),
+                outOfStock: `${outOfStock} Item${outOfStock !== 1 ? 's' : ''}`,
+                monthlyInflow: formattedInflow
+            },
+            materials: materialData
+        };
+
+        res.json(realTimeInventoryData);
+    } catch (error) {
+        console.error("Error fetching inventory data:", error);
+        res.status(500).json({ message: "Error fetching inventory data" });
+    }
+};
+
+const logDelivery = async (req, res) => {
+    const { id: projectId } = req.params;
+    const { materialName, unit, quantity, supplier, totalCost, iconType, deliveryChallanUrl, stackPhotoUrl } = req.body;
+
+    try {
+        const parsedQuantity = parseFloat(quantity);
+        const parsedTotalCost = parseFloat(totalCost);
+
+        // Escape special characters in material name for regex matching (like parentheses)
+        const escapedMaterialName = materialName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+
+        // Try to find material by exact name or create new
+        let material = await Material.findOne({ project_id: projectId, name: new RegExp('^' + escapedMaterialName + '$', 'i') });
+
+        if (!material) {
+            material = new Material({
+                project_id: projectId,
+                name: materialName,
+                unit: unit,
+                iconType: iconType || 'box'
+            });
+        }
+
+        // Update balances
+        material.inflow += parsedQuantity;
+        material.balance += parsedQuantity;
+
+        // Update average unit price
+        if (parsedQuantity > 0 && parsedTotalCost > 0) {
+            material.unitPrice = parsedTotalCost / parsedQuantity;
+        }
+
+        // Add log
+        material.logs.push({
+            type: 'delivery',
+            quantity: parsedQuantity,
+            supplier: supplier,
+            totalCost: parsedTotalCost,
+            deliveryChallanUrl,
+            stackPhotoUrl
+        });
+
+        await material.save();
+
+        if (req.user && req.user._id) {
+            logActivity(
+                req.user._id,
+                'LOGGED_DELIVERY',
+                'Material',
+                `Logged delivery of ${parsedQuantity} ${unit} of ${materialName}`,
+                material._id
+            );
+        }
+
+        // --- AUTOMATIC EXPENSE CREATION ---
+        // If the delivery has a cost, automatically log it as an approved business expense
+        if (parsedTotalCost > 0 && req.user && req.user._id) {
+            try {
+                const newExpense = new Expense({
+                    title: `Material Delivery: ${materialName}`,
+                    description: `Automated entry: Delivery of ${parsedQuantity} ${unit} from ${supplier || 'supplier'}`,
+                    amount: parsedTotalCost,
+                    category: 'Material',
+                    project: projectId,
+                    submittedBy: req.user._id,
+                    status: 'Approved' // Auto-approved because it's already delivered
+                });
+                await newExpense.save();
+            } catch (expenseErr) {
+                console.error("Failed to auto-create expense from material delivery:", expenseErr);
+                // Do not throw; we still want the material delivery to succeed even if the financial log fails
+            }
+        }
+
+        res.status(200).json(material);
+
+    } catch (error) {
+        console.error("Error logging delivery:", error);
+        res.status(500).json({ message: "Error logging delivery" });
+    }
+};
+
+const logUsage = async (req, res) => {
+    const { id: projectId } = req.params;
+    const { materialId, quantity, locationPurpose, usagePhotoUrl } = req.body;
+
+    try {
+        const parsedQuantity = parseFloat(quantity);
+        const material = await Material.findOne({ _id: materialId, project_id: projectId });
+
+        if (!material) {
+            return res.status(404).json({ message: "Material not found" });
+        }
+
+        // Update balances
+        material.outflow += parsedQuantity;
+        material.balance -= parsedQuantity; // Can go negative if logging mistake, better to allow than block block hard
+
+        material.logs.push({
+            type: 'usage',
+            quantity: parsedQuantity,
+            locationPurpose: locationPurpose,
+            usagePhotoUrl
+        });
+
+        await material.save();
+
+        if (req.user && req.user._id) {
+            logActivity(
+                req.user._id,
+                'LOGGED_USAGE',
+                'Material',
+                `Logged usage of ${parsedQuantity} ${material.unit} of ${material.name}`,
+                material._id
+            );
+        }
+
+        res.status(200).json(material);
+
+    } catch (error) {
+        console.error("Error logging usage:", error);
+        res.status(500).json({ message: "Error logging usage" });
+    }
+};
+
+const updateMaterialThreshold = async (req, res) => {
+    const { id: projectId, materialId } = req.params;
+    const { lowStockThreshold } = req.body;
+
+    try {
+        const threshold = parseFloat(lowStockThreshold);
+        if (isNaN(threshold) || threshold < 0) {
+            return res.status(400).json({ message: 'Threshold must be a non-negative number' });
+        }
+
+        const material = await Material.findOne({ _id: materialId, project_id: projectId });
+        if (!material) return res.status(404).json({ message: 'Material not found' });
+
+        material.lowStockThreshold = threshold;
+        await material.save();
+
+        res.json({
+            id: material._id.toString(),
+            lowStockThreshold: material.lowStockThreshold,
+            status: material.status
+        });
+    } catch (error) {
+        console.error('Error updating material threshold:', error);
+        res.status(500).json({ message: 'Error updating threshold' });
+    }
+};
+
+module.exports = { getProjectInventory, logDelivery, logUsage, updateMaterialThreshold };

@@ -1,0 +1,502 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import CompanyLogo from '../components/CompanyLogo';
+import {
+    LayoutDashboard, FolderOpen, Users, FileText, Settings, Plus,
+    Search, MapPin, Trash2, Edit2, X, ChevronRight, BarChart3, Mail, Phone, Calendar
+} from 'lucide-react';
+import api from '../api/axios';
+import { useToast } from '../components/Toast';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import GlobalLoader from '../components/GlobalLoader';
+import StatusPopover from '../components/StatusPopover';
+
+const Personnel = () => {
+    const navigate = useNavigate();
+    const { user: currentUser } = useAuth();
+    const [personnel, setPersonnel] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [searchQuery, setSearchQuery] = useState('');
+    const { showToast, ToastComponent } = useToast();
+    const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+    const [companyName, setCompanyName] = useState('RelayDesk');
+    const [companyInitial, setCompanyInitial] = useState('B');
+    const [deleteId, setDeleteId] = useState(null);
+    const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+    const [newMember, setNewMember] = useState({ name: '', role: '', email: '', phone: '+91 ', site: '', status: 'On Site', leaveEndDate: '' });
+    const [fieldErrors, setFieldErrors] = useState({});
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [editMember, setEditMember] = useState(null);
+
+    useEffect(() => {
+        const updateCompanyDisplay = () => {
+            const shortName = localStorage.getItem('companyShortName');
+            if (shortName) { setCompanyName(shortName); setCompanyInitial(shortName[0].toUpperCase()); }
+            else { setCompanyName('RelayDesk'); setCompanyInitial('B'); }
+        };
+        updateCompanyDisplay();
+        window.addEventListener('companyNameUpdated', updateCompanyDisplay);
+        return () => window.removeEventListener('companyNameUpdated', updateCompanyDisplay);
+    }, []);
+
+    useEffect(() => { fetchPersonnel(); }, []);
+
+    const fetchPersonnel = async () => {
+        setLoading(true);
+        try { const response = await api.get('/personnel'); setPersonnel(response.data); }
+        catch (error) { console.error("Failed to fetch personnel:", error); showToast("Failed to load personnel data", "error"); }
+        finally { setLoading(false); }
+    };
+
+    const handlePhoneChange = (e) => {
+        const value = e.target.value;
+        if (!value.startsWith('+91 ')) { setNewMember({ ...newMember, phone: '+91 ' }); return; }
+        const numberPart = value.slice(4);
+        if (!/^\d*$/.test(numberPart)) return;
+        if (numberPart.length > 10) return;
+        setNewMember({ ...newMember, phone: value });
+    };
+
+    const handleAddSubmit = async (e) => {
+        e.preventDefault();
+        // Custom validation — highlight empty fields
+        const errors = {};
+        if (!newMember.name.trim()) errors.name = true;
+        if (!newMember.email.trim()) errors.email = true;
+        if (!newMember.phone || newMember.phone.trim() === '+91' || newMember.phone.trim() === '+91 ') errors.phone = true;
+        if (!newMember.site.trim()) errors.site = true;
+        if (!newMember.role) errors.role = true;
+
+        if (Object.keys(errors).length > 0) {
+            setFieldErrors(errors);
+            // Clear errors after 2 seconds
+            setTimeout(() => setFieldErrors({}), 2000);
+            return;
+        }
+        setFieldErrors({});
+
+        try {
+            const payload = { ...newMember, avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(newMember.name)}&background=random` };
+            const response = await api.post('/personnel', payload);
+            if (response.status === 201) {
+                setPersonnel([response.data, ...personnel]);
+                setIsAddModalOpen(false);
+                setNewMember({ name: '', role: '', email: '', phone: '+91 ', site: '', status: 'On Site', leaveEndDate: '' });
+                showToast("Team member added successfully!", "success");
+            }
+        } catch (error) {
+            console.error("Error adding member:", error);
+            const errorMsg = error.response?.data?.message || "Failed to add member.";
+            showToast(errorMsg, "error");
+        }
+    };
+
+    const openEditModal = (person) => {
+        setEditMember({ ...person });
+        setFieldErrors({});
+        setIsEditModalOpen(true);
+    };
+
+    const handleEditSubmit = async (e) => {
+        e.preventDefault();
+        const errors = {};
+        if (!editMember.name.trim()) errors.name = true;
+        if (!editMember.email.trim()) errors.email = true;
+        if (!editMember.phone || editMember.phone.trim() === '+91' || editMember.phone.trim() === '+91 ') errors.phone = true;
+        if (!editMember.site.trim()) errors.site = true;
+        if (!editMember.role) errors.role = true;
+
+        if (Object.keys(errors).length > 0) {
+            setFieldErrors(errors);
+            setTimeout(() => setFieldErrors({}), 2000);
+            return;
+        }
+        setFieldErrors({});
+
+        try {
+            const response = await api.put(`/personnel/${editMember._id}`, editMember);
+            if (response.status === 200) {
+                setPersonnel(personnel.map(p => p._id === editMember._id ? response.data : p));
+                setIsEditModalOpen(false);
+                setEditMember(null);
+                showToast("Team member updated successfully!", "success");
+            }
+        } catch (error) {
+            console.error("Error updating member:", error);
+            const errorMsg = error.response?.data?.message || "Failed to update member.";
+            showToast(errorMsg, "error");
+        }
+    };
+
+    const confirmDelete = (id) => { setDeleteId(id); setIsDeleteModalOpen(true); };
+
+    const handleDelete = async () => {
+        if (!deleteId) return;
+        try {
+            await api.delete(`/personnel/${deleteId}`);
+            setPersonnel(personnel.filter(p => p._id !== deleteId));
+            showToast("Team member removed successfully", "success");
+            setIsDeleteModalOpen(false); setDeleteId(null);
+        } catch (error) { console.error("Error deleting member:", error); showToast("Failed to delete member", "error"); }
+    };
+
+    const filteredPersonnel = useMemo(() => {
+        return personnel.filter(p => {
+            const q = searchQuery.toLowerCase();
+            return (p.name && p.name.toLowerCase().includes(q)) ||
+                (p.role && p.role.toLowerCase().includes(q)) ||
+                (p.site && p.site.toLowerCase().includes(q));
+        });
+    }, [searchQuery, personnel]);
+
+    const stats = useMemo(() => ({
+        total: personnel.length,
+        onSite: personnel.filter(p => p.status === 'On Site').length,
+        remote: personnel.filter(p => p.status === 'Remote').length,
+        offDuty: personnel.filter(p => p.status === 'Off Duty').length,
+        onLeave: personnel.filter(p => p.status === 'On Leave').length,
+    }), [personnel]);
+
+    return (
+        <div className="flex h-full bg-[#0f1117] font-sans text-white overflow-hidden">
+            {ToastComponent}
+            {loading && <GlobalLoader />}
+
+            {/* ─── SIDEBAR ─── */}
+            <aside className="w-[240px] bg-[#0f1117] flex flex-col z-20 hidden md:flex border-r border-white/[0.06]">
+                <div className="px-5 py-5 flex items-center justify-center"><CompanyLogo className="w-28 h-auto object-contain opacity-90" defaultLogoType="white" /></div>
+                <nav className="flex-1 px-3 space-y-0.5 mt-2">
+                    <div className="px-3 mb-3"><p className="text-[10px] font-semibold text-white/20 uppercase tracking-widest">Menu</p></div>
+                    <NavItem icon={<LayoutDashboard size={17} />} text="Dashboard" href="/" />
+                    <NavItem icon={<FolderOpen size={17} />} text="Projects" href="/projects" />
+                    {['Admin', 'Site Manager'].includes(currentUser?.role) && <NavItem icon={<Users size={17} />} text="Personnel" active href="/personnel" />}
+                    {['Admin'].includes(currentUser?.role) && <NavItem icon={<BarChart3 size={17} />} text="Budget" href="/budget" />}
+                    {['Admin', 'Site Manager', 'Client'].includes(currentUser?.role) && <NavItem icon={<FileText size={17} />} text="Reports" href="/reports" />}
+                    {['Admin', 'Site Manager'].includes(currentUser?.role) && (
+                        <>
+                            <div className="px-3 mt-6 mb-3">
+                                <p className="text-[10px] font-semibold text-white/20 uppercase tracking-widest">System</p>
+                            </div>
+                            <NavItem icon={<Settings size={17} />} text="Settings" href="/settings" />
+                        </>
+                    )}
+                </nav>
+                <div className="px-3 pb-4">
+                    <div onClick={() => navigate('/profile')} className="flex items-center gap-3 px-3 py-3 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.04] transition-all cursor-pointer group">
+                        {currentUser?.profile_image ? (
+                            <div className="w-8 h-8 rounded-lg overflow-hidden ring-1 ring-white/10"><img src={currentUser.profile_image} alt={currentUser.username} referrerPolicy="no-referrer" className="w-full h-full object-cover" /></div>
+                        ) : (
+                            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500/20 to-blue-500/20 flex items-center justify-center text-violet-300 text-xs font-semibold ring-1 ring-white/10">{currentUser?.username?.[0] || 'U'}</div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                            <p className="text-[12px] font-medium text-white/80 truncate">{currentUser?.username || 'User'}</p>
+                            <p className="text-[10px] text-white/25">{currentUser?.role || 'Guest'}</p>
+                        </div>
+                        <ChevronRight size={12} className="text-white/10 group-hover:text-white/30 transition-colors" />
+                    </div>
+                </div>
+            </aside>
+
+            {/* ─── MAIN ─── */}
+            <main className="flex-1 overflow-y-auto bg-[#f6f7f9]">
+                <header className="sticky top-0 z-10 px-8 py-5 flex justify-between items-center bg-[#f6f7f9]/90 backdrop-blur-sm border-b border-gray-100">
+                    <div>
+                        <div className="flex items-center gap-2 mb-1">
+                            <div className="w-1 h-5 rounded-full bg-gradient-to-b from-violet-500 to-blue-500" />
+                            <h1 className="text-xl font-bold text-gray-900">Personnel</h1>
+                        </div>
+                        <p className="text-sm text-gray-400 ml-3">Team members across all project sites</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <div className="relative">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300" size={15} />
+                            <input type="text" placeholder="Search members..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+                                className="pl-9 pr-4 py-2 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-gray-300 w-56 text-sm text-gray-600 placeholder-gray-300" />
+                        </div>
+                        <button onClick={() => setIsAddModalOpen(true)} className="bg-[#1a1d2e] hover:bg-[#252840] text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium transition-colors">
+                            <Plus size={16} strokeWidth={2.5} /> Add Member
+                        </button>
+                    </div>
+                </header>
+
+                <div className="px-8 py-6 space-y-6">
+                    {/* Quick Stats */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                        <MiniStat label="Total" value={stats.total} color="violet" />
+                        <MiniStat label="On Site" value={stats.onSite} color="emerald" />
+                        <MiniStat label="Remote" value={stats.remote} color="blue" />
+                        <MiniStat label="Off Duty" value={stats.offDuty} color="gray" />
+                        <MiniStat label="On Leave" value={stats.onLeave} color="amber" />
+                    </div>
+
+                    {/* Data Table */}
+                    <div className="bg-white rounded-2xl border border-gray-100 overflow-visible">
+                        <table className="w-full text-left">
+                            <thead>
+                                <tr className="border-b border-gray-50">
+                                    <th className="py-3.5 px-6 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Member</th>
+                                    <th className="py-3.5 px-6 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Contact</th>
+                                    <th className="py-3.5 px-6 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Site Assignment</th>
+                                    <th className="py-3.5 px-6 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Status</th>
+                                    <th className="py-3.5 px-6 text-[11px] font-semibold text-gray-400 uppercase tracking-wider text-right">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-50">
+                                {loading ? null : filteredPersonnel.length > 0 ? (
+                                    filteredPersonnel.map((person) => (
+                                        <tr key={person._id} className="hover:bg-gray-50/50 transition-colors group">
+                                            <td className="py-3.5 px-6">
+                                                <div className="flex items-center gap-3">
+                                                    <img src={person.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(person.name)}&background=random&size=64`} alt={person.name} className="w-9 h-9 rounded-lg object-cover" />
+                                                    <div>
+                                                        <p className="text-sm font-medium text-gray-900">{person.name}</p>
+                                                        <p className="text-[11px] text-gray-400">{person.role}</p>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td className="py-3.5 px-6">
+                                                <div className="space-y-0.5">
+                                                    <p className="text-xs text-gray-500 flex items-center gap-1.5"><Mail size={11} className="text-gray-300" /> {person.email}</p>
+                                                    <p className="text-xs text-gray-400 flex items-center gap-1.5"><Phone size={11} className="text-gray-300" /> {person.phone}</p>
+                                                </div>
+                                            </td>
+                                            <td className="py-3.5 px-6">
+                                                <span className="text-xs text-gray-500 flex items-center gap-1.5"><MapPin size={12} className="text-gray-300" /> {person.site}</span>
+                                            </td>
+                                            <td className="py-3.5 px-6">
+                                                <StatusPopover
+                                                    currentStatus={person.status}
+                                                    returnDate={person.leaveEndDate}
+                                                    onStatusChange={async (newStatus, returnDate) => {
+                                                        try {
+                                                            const response = await api.patch(`/personnel/${person._id}/status`, {
+                                                                status: newStatus,
+                                                                leaveEndDate: returnDate
+                                                            });
+                                                            if (response.status === 200) {
+                                                                setPersonnel(prev => prev.map(p => p._id === person._id ? { ...p, status: newStatus, leaveEndDate: returnDate } : p));
+                                                                showToast("Status updated successfully", "success");
+                                                            }
+                                                        } catch (error) {
+                                                            console.error("Failed to update status", error);
+                                                            showToast("Failed to update status", "error");
+                                                        }
+                                                    }}
+                                                />
+                                            </td>
+                                            <td className="py-3.5 px-6 text-right">
+                                                <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <button onClick={() => openEditModal(person)} className="text-gray-400 hover:text-blue-600 p-1.5 rounded-lg hover:bg-blue-50 transition-colors" title="Edit">
+                                                        <Edit2 size={15} />
+                                                    </button>
+                                                    <button onClick={() => confirmDelete(person._id)} className="text-gray-400 hover:text-red-600 p-1.5 rounded-lg hover:bg-red-50 transition-colors" title="Remove">
+                                                        <Trash2 size={15} />
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))
+                                ) : (
+                                    <tr><td colSpan="5" className="py-16 text-center text-gray-300 text-sm">No personnel found</td></tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </main>
+
+            {/* ─── ADD MODAL ─── */}
+            {isAddModalOpen && (
+                <div className="fixed inset-0 flex items-center justify-center z-50 p-4 backdrop-blur-sm bg-black/30">
+                    <div className="absolute inset-0" onClick={() => setIsAddModalOpen(false)}></div>
+                    <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-gray-100">
+                        <div className="flex justify-between items-center px-6 py-5 border-b border-gray-50">
+                            <h3 className="font-semibold text-base text-gray-900">Add Team Member</h3>
+                            <button onClick={() => setIsAddModalOpen(false)} className="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-50 transition-colors"><X size={18} /></button>
+                        </div>
+                        <form onSubmit={handleAddSubmit} noValidate className="p-6 space-y-4">
+                            <FormField label="Full Name" type="text" value={newMember.name} onChange={e => { setNewMember({ ...newMember, name: e.target.value }); setFieldErrors(prev => ({ ...prev, name: false })); }} placeholder="e.g. John Doe" error={fieldErrors.name} />
+                            <div className="grid grid-cols-2 gap-3">
+                                <FormField label="Email" type="email" value={newMember.email} onChange={e => { setNewMember({ ...newMember, email: e.target.value }); setFieldErrors(prev => ({ ...prev, email: false })); }} placeholder="john@example.com" error={fieldErrors.email} />
+                                <FormField label="Phone" type="tel" value={newMember.phone} onChange={e => { handlePhoneChange(e); setFieldErrors(prev => ({ ...prev, phone: false })); }} placeholder="+91 99999 99999" error={fieldErrors.phone} />
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <FormField label="Site Assignment" type="text" value={newMember.site} onChange={e => { setNewMember({ ...newMember, site: e.target.value }); setFieldErrors(prev => ({ ...prev, site: false })); }} placeholder="e.g. Skyline Plaza" error={fieldErrors.site} />
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-500 mb-1.5">Status</label>
+                                    <select value={newMember.status} onChange={e => setNewMember({ ...newMember, status: e.target.value })}
+                                        className="w-full bg-gray-50 border border-gray-200 px-3 py-2.5 rounded-lg focus:ring-1 focus:ring-gray-300 focus:border-gray-300 outline-none text-sm text-gray-700 appearance-none transition-all">
+                                        <option value="On Site">On Site</option>
+                                        <option value="Remote">Remote</option>
+                                        <option value="Off Duty">Off Duty</option>
+                                        <option value="On Leave">On Leave</option>
+                                    </select>
+                                </div>
+                            </div>
+                            {newMember.status === 'On Leave' && (
+                                <div className="animate-in fade-in zoom-in-95 duration-200">
+                                    <label className="block text-xs font-bold text-amber-600 uppercase tracking-wider mb-1.5 flex items-center gap-1.5"><Calendar size={12} /> Expected Return Date</label>
+                                    <input type="date" value={newMember.leaveEndDate || ''} onChange={e => setNewMember({ ...newMember, leaveEndDate: e.target.value })}
+                                        className="w-full bg-amber-50/50 border border-amber-200 px-3 py-2.5 rounded-lg focus:ring-1 focus:ring-amber-400 outline-none text-sm text-amber-900 placeholder-amber-300" />
+                                </div>
+                            )}
+                            <div>
+                                <label className="block text-xs font-medium text-gray-500 mb-1.5">Role</label>
+                                <select value={newMember.role} onChange={e => { setNewMember({ ...newMember, role: e.target.value }); setFieldErrors(prev => ({ ...prev, role: false })); }}
+                                    className={`w-full bg-gray-50 border px-3 py-2.5 rounded-lg focus:ring-1 focus:ring-gray-300 focus:border-gray-300 outline-none text-sm text-gray-700 appearance-none transition-all ${fieldErrors.role ? 'border-red-400 ring-2 ring-red-100 animate-[shake_0.3s_ease-in-out]' : 'border-gray-200'}`}>
+                                    <option value="" disabled>Select a role</option>
+                                    {['Architect', 'Civil Engineer', 'Structural Engineer', 'Site Supervisor', 'Electrician', 'Plumber', 'Carpenter', 'Mason', 'Laborer', 'Safety Officer'].map(r => <option key={r} value={r}>{r}</option>)}
+                                </select>
+                                {fieldErrors.role && <p className="text-xs text-red-400 mt-1">Please select a role</p>}
+                            </div>
+                            <div className="pt-3 flex justify-end gap-2 border-t border-gray-50 mt-2">
+                                <button type="button" onClick={() => setIsAddModalOpen(false)} className="px-4 py-2 text-sm text-gray-500 hover:bg-gray-50 rounded-lg transition-colors">Cancel</button>
+                                <button type="submit" className="px-4 py-2 bg-[#1a1d2e] hover:bg-[#252840] text-white text-sm font-medium rounded-lg transition-colors">Save Member</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* ─── EDIT MODAL ─── */}
+            {isEditModalOpen && editMember && (
+                <div className="fixed inset-0 flex items-center justify-center z-50 p-4 backdrop-blur-sm bg-black/30">
+                    <div className="absolute inset-0" onClick={() => setIsEditModalOpen(false)}></div>
+                    <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-gray-100">
+                        <div className="flex justify-between items-center px-6 py-5 border-b border-gray-50">
+                            <h3 className="font-semibold text-base text-gray-900">Edit Team Member</h3>
+                            <button onClick={() => setIsEditModalOpen(false)} className="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-50 transition-colors"><X size={18} /></button>
+                        </div>
+                        <form onSubmit={handleEditSubmit} noValidate className="p-6 space-y-4">
+                            <FormField label="Full Name" type="text" value={editMember.name} onChange={e => { setEditMember({ ...editMember, name: e.target.value }); setFieldErrors(prev => ({ ...prev, name: false })); }} placeholder="e.g. John Doe" error={fieldErrors.name} />
+                            <div className="grid grid-cols-2 gap-3">
+                                <FormField label="Email" type="email" value={editMember.email} onChange={e => { setEditMember({ ...editMember, email: e.target.value }); setFieldErrors(prev => ({ ...prev, email: false })); }} placeholder="john@example.com" error={fieldErrors.email} />
+                                <FormField label="Phone" type="tel" value={editMember.phone} onChange={e => {
+                                    let val = e.target.value;
+                                    if (!val.startsWith('+91 ')) { setEditMember({ ...editMember, phone: '+91 ' }); return; }
+                                    const numPart = val.slice(4);
+                                    if (!/^\d*$/.test(numPart)) return;
+                                    if (numPart.length > 10) return;
+                                    setEditMember({ ...editMember, phone: val });
+                                    setFieldErrors(prev => ({ ...prev, phone: false }));
+                                }} placeholder="+91 99999 99999" error={fieldErrors.phone} />
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <FormField label="Site Assignment" type="text" value={editMember.site} onChange={e => { setEditMember({ ...editMember, site: e.target.value }); setFieldErrors(prev => ({ ...prev, site: false })); }} placeholder="e.g. Skyline Plaza" error={fieldErrors.site} />
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-500 mb-1.5">Status</label>
+                                    <select value={editMember.status} onChange={e => setEditMember({ ...editMember, status: e.target.value })}
+                                        className="w-full bg-gray-50 border border-gray-200 px-3 py-2.5 rounded-lg focus:ring-1 focus:ring-gray-300 focus:border-gray-300 outline-none text-sm text-gray-700 appearance-none transition-all">
+                                        <option value="On Site">On Site</option>
+                                        <option value="Remote">Remote</option>
+                                        <option value="Off Duty">Off Duty</option>
+                                        <option value="On Leave">On Leave</option>
+                                    </select>
+                                </div>
+                            </div>
+                            {editMember.status === 'On Leave' && (
+                                <div className="animate-in fade-in zoom-in-95 duration-200">
+                                    <label className="block text-xs font-bold text-amber-600 uppercase tracking-wider mb-1.5 flex items-center gap-1.5"><Calendar size={12} /> Expected Return Date</label>
+                                    <input type="date" value={editMember.leaveEndDate ? editMember.leaveEndDate.substring(0, 10) : ''} onChange={e => setEditMember({ ...editMember, leaveEndDate: e.target.value })}
+                                        className="w-full bg-amber-50/50 border border-amber-200 px-3 py-2.5 rounded-lg focus:ring-1 focus:ring-amber-400 outline-none text-sm text-amber-900 placeholder-amber-300" />
+                                </div>
+                            )}
+                            <div>
+                                <label className="block text-xs font-medium text-gray-500 mb-1.5">Role</label>
+                                <select value={editMember.role} onChange={e => { setEditMember({ ...editMember, role: e.target.value }); setFieldErrors(prev => ({ ...prev, role: false })); }}
+                                    className={`w-full bg-gray-50 border px-3 py-2.5 rounded-lg focus:ring-1 focus:ring-gray-300 focus:border-gray-300 outline-none text-sm text-gray-700 appearance-none transition-all ${fieldErrors.role ? 'border-red-400 ring-2 ring-red-100 animate-[shake_0.3s_ease-in-out]' : 'border-gray-200'}`}>
+                                    <option value="" disabled>Select a role</option>
+                                    {['Architect', 'Civil Engineer', 'Structural Engineer', 'Site Supervisor', 'Electrician', 'Plumber', 'Carpenter', 'Mason', 'Laborer', 'Safety Officer'].map(r => <option key={r} value={r}>{r}</option>)}
+                                </select>
+                                {fieldErrors.role && <p className="text-xs text-red-400 mt-1">Please select a role</p>}
+                            </div>
+                            <div className="pt-3 flex justify-end gap-2 border-t border-gray-50 mt-2">
+                                <button type="button" onClick={() => setIsEditModalOpen(false)} className="px-4 py-2 text-sm text-gray-500 hover:bg-gray-50 rounded-lg transition-colors">Cancel</button>
+                                <button type="submit" className="px-4 py-2 bg-[#1a1d2e] hover:bg-[#252840] text-white text-sm font-medium rounded-lg transition-colors">Save Changes</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* ─── DELETE MODAL ─── */}
+            {isDeleteModalOpen && (
+                <div className="fixed inset-0 flex items-center justify-center z-50 p-4 backdrop-blur-sm bg-black/30">
+                    <div className="absolute inset-0" onClick={() => setIsDeleteModalOpen(false)}></div>
+                    <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center border border-gray-100">
+                        <div className="w-12 h-12 bg-red-50 rounded-xl flex items-center justify-center mx-auto mb-4">
+                            <Trash2 className="text-red-500" size={20} />
+                        </div>
+                        <h3 className="text-base font-semibold text-gray-900 mb-1">Remove Team Member?</h3>
+                        <p className="text-gray-400 text-sm mb-6">This action cannot be undone.</p>
+                        <div className="flex gap-3">
+                            <button onClick={() => setIsDeleteModalOpen(false)} className="flex-1 px-4 py-2.5 text-sm text-gray-600 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors">Cancel</button>
+                            <button onClick={handleDelete} className="flex-1 px-4 py-2.5 bg-red-500 text-white text-sm font-medium rounded-lg hover:bg-red-600 transition-colors">Remove</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+// ─── SHARED COMPONENTS ───
+
+const NavItem = ({ icon, text, active, href }) => (
+    <a href={href || "#"} className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-all text-[13px] group ${active ? 'bg-white/[0.08] text-white' : 'text-white/30 hover:bg-white/[0.04] hover:text-white/60'}`}>
+        <span className={`transition-colors ${active ? 'text-violet-400' : 'text-white/20 group-hover:text-white/40'}`}>{icon}</span>
+        <span className="font-medium">{text}</span>
+        {active && <div className="ml-auto w-1 h-4 rounded-full bg-gradient-to-b from-violet-400 to-blue-500"></div>}
+    </a>
+);
+
+const MiniStat = ({ label, value, color }) => {
+    const colors = {
+        violet: 'bg-violet-50 text-violet-600', emerald: 'bg-emerald-50 text-emerald-600',
+        blue: 'bg-violet-50 text-violet-500', gray: 'bg-gray-100 text-gray-500', amber: 'bg-amber-50 text-amber-500'
+    };
+    return (
+        <div className="bg-white border border-gray-100 rounded-xl px-5 py-4">
+            <p className="text-xs text-gray-400 font-medium mb-1">{label}</p>
+            <div className="flex items-center justify-between">
+                <p className="text-xl font-semibold text-gray-900">{value}</p>
+                <div className={`w-2 h-2 rounded-full ${colors[color]?.split(' ')[0] || 'bg-gray-100'}`}></div>
+            </div>
+        </div>
+    );
+};
+
+const StatusPill = ({ status, person = {} }) => {
+    if (status === 'On Leave' && person.leaveEndDate) {
+        const returnDate = new Date(person.leaveEndDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+        return (
+            <span className="px-2 pr-2.5 py-1 bg-amber-50 text-amber-600 rounded-full text-[10px] font-bold border border-amber-100 flex items-center gap-1.5 w-max">
+                <Calendar size={11} className="opacity-70" /> On Leave till {returnDate}
+            </span>
+        );
+    }
+
+    const s = {
+        'On Site': { bg: 'bg-emerald-50', text: 'text-emerald-600', dot: 'bg-emerald-500' },
+        'Remote': { bg: 'bg-violet-50', text: 'text-violet-500', dot: 'bg-violet-500' },
+        'Off Duty': { bg: 'bg-gray-100', text: 'text-gray-500', dot: 'bg-gray-400' },
+        'On Leave': { bg: 'bg-amber-50', text: 'text-amber-500', dot: 'bg-amber-400' }
+    };
+    const c = s[status] || s['Off Duty'];
+    return (
+        <span className={`${c.bg} ${c.text} text-[10px] font-bold pl-2 pr-2.5 py-1 rounded-full flex items-center gap-1.5 w-fit border border-black/5`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`}></span>
+            {status}
+        </span>
+    );
+};
+
+const FormField = ({ label, error, ...props }) => (
+    <div>
+        <label className="block text-xs font-medium text-gray-500 mb-1.5">{label}</label>
+        <input {...props} className={`w-full bg-gray-50 border px-3 py-2.5 rounded-lg focus:ring-1 focus:ring-gray-300 focus:border-gray-300 outline-none text-sm text-gray-700 placeholder-gray-300 transition-all ${error ? 'border-red-400 ring-2 ring-red-100' : 'border-gray-200'}`} />
+        {error && <p className="text-xs text-red-400 mt-1">This field is required</p>}
+    </div>
+);
+
+export default Personnel;

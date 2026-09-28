@@ -1,0 +1,66 @@
+const DailyLog = require('../models/DailyLog');
+const Project = require('../models/Project');
+const logActivity = require('../utils/activityLogger');
+
+const getProjectDailyLogs = async (req, res) => {
+    const { id: projectId } = req.params;
+
+    try {
+        const logs = await DailyLog.find({ project_id: projectId }).sort({ date: -1 });
+
+        const logsData = {
+            projectPhase: "Construction Phase",
+            lastUpdated: logs.length > 0 ? new Date(logs[0].updatedAt).toLocaleString() : "No logs yet",
+            logs: logs.map(log => ({
+                id: log._id.toString(),
+                date: log.date,
+                day: log.day,
+                weather: {
+                    condition: log.weather?.condition || "Sunny",
+                    icon: (log.weather?.condition || "Sunny").toLowerCase()
+                },
+                laborers: log.laborers,
+                notes: log.notes,
+                gallery: log.gallery || []
+            }))
+        };
+
+        res.json(logsData);
+    } catch (error) {
+        console.error("Error fetching daily logs:", error);
+        res.status(500).json({ message: "Error fetching daily logs" });
+    }
+};
+
+const createDailyLog = async (req, res) => {
+    const { id: projectId } = req.params;
+
+    try {
+        const { date, day, weatherCondition, laborers, notes, gallery } = req.body;
+
+        const newLog = new DailyLog({
+            project_id: projectId,
+            date: date || new Date(),
+            day,
+            weather: {
+                condition: weatherCondition
+            },
+            laborers: parseInt(laborers) || 0,
+            notes,
+            gallery: gallery || []
+        });
+
+        await newLog.save();
+
+        if (req.user && req.user._id) {
+            logActivity(req.user._id, 'CREATED_DAILY_LOG', 'DailyLog', `Created daily log for ${day || 'a day'} in project`, projectId);
+        }
+
+        res.status(201).json({ message: 'Daily log created successfully', log: newLog });
+    } catch (error) {
+        console.error("Error creating daily log:", error);
+        res.status(500).json({ message: "Error creating daily log", error: error.message });
+    }
+};
+
+module.exports = { getProjectDailyLogs, createDailyLog };

@@ -1,0 +1,690 @@
+import React, { useState, useEffect } from 'react';
+import { X, Upload, Home, Building2, Hammer, Sofa, CheckCircle2, Calendar, Loader2, Plus, FileText, Trash2, ImagePlus, Layers } from 'lucide-react';
+import DatePicker from 'react-datepicker';
+import "react-datepicker/dist/react-datepicker.css";
+import api from '../api/axios';
+import { useToast } from './Toast';
+import { uploadToCloudinary, uploadMultipleToCloudinary } from '../utils/cloudinaryUpload';
+
+const CreateProjectModal = ({ isOpen, onClose, onCreate }) => {
+    const { showToast, ToastComponent } = useToast();
+    const [formData, setFormData] = useState({
+        title: '',
+        client: '',
+        address: '',
+        siteSize: '',
+        floors: '',
+        type: 'Residential',
+        budget: '',
+        budgetUnit: 'Lakhs',
+        startDate: null,
+        endDate: null,
+        manager: '',
+        contractor: ''
+    });
+    const [blockMode, setBlockMode] = useState('single');
+    const [uploadedFiles, setUploadedFiles] = useState([]);
+    const [coverImage, setCoverImage] = useState(null);
+    const [coverPreview, setCoverPreview] = useState(null);
+    const [isLoading, setIsLoading] = useState(false);
+    const [personnel, setPersonnel] = useState([]);
+    const [selectedPersonnel, setSelectedPersonnel] = useState([]);
+    const [errors, setErrors] = useState({});
+
+    useEffect(() => {
+        if (isOpen) {
+            api.get('/personnel').then(res => {
+                setPersonnel(res.data || []);
+            }).catch(err => console.error('Failed to fetch personnel', err));
+        }
+    }, [isOpen]);
+
+    if (!isOpen) return null;
+
+    const handleChange = (e) => {
+        const { name, value } = e.target;
+
+        // Prevent negative numbers for specific fields
+        if (['siteSize', 'floors', 'budget'].includes(name) && value !== '') {
+            if (parseFloat(value) < 0) return;
+        }
+
+        setFormData(prev => ({ ...prev, [name]: value }));
+        if (errors[name]) setErrors(prev => ({ ...prev, [name]: undefined }));
+    };
+
+    const handleDateChange = (date, name) => {
+        setFormData(prev => ({ ...prev, [name]: date }));
+        if (errors[name]) setErrors(prev => ({ ...prev, [name]: undefined }));
+    };
+
+    const handleTypeSelect = (type) => {
+        setFormData(prev => ({ ...prev, type }));
+    };
+
+    const handleFileChange = (e) => {
+        if (e.target.files && e.target.files.length > 0) {
+            setUploadedFiles(prev => [...prev, ...Array.from(e.target.files)]);
+        }
+    };
+
+    const handleDrop = (e) => {
+        e.preventDefault();
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            setUploadedFiles(prev => [...prev, ...Array.from(e.dataTransfer.files)]);
+        }
+    };
+
+    const removeFile = (index) => {
+        setUploadedFiles(prev => prev.filter((_, i) => i !== index));
+    };
+
+    const handleDragOver = (e) => {
+        e.preventDefault();
+    };
+
+    const handleSubmit = async () => {
+        // Basic validation
+        const newErrors = {};
+        if (!formData.title?.trim()) newErrors.title = "Project Name is required";
+        if (!formData.client?.trim()) newErrors.client = "Client Name is required";
+        if (!formData.address?.trim()) newErrors.address = "Site Address is required";
+        if (!formData.siteSize?.toString().trim()) newErrors.siteSize = "Site Size is required";
+        if (!formData.floors?.toString().trim()) newErrors.floors = "Number of Floors is required";
+        if (!formData.budget?.toString().trim()) newErrors.budget = "Estimated Budget is required";
+        if (!formData.startDate) newErrors.startDate = "Start Date is required";
+        if (!formData.endDate) newErrors.endDate = "Completion Date is required";
+        if (!formData.manager?.trim()) newErrors.manager = "Site Manager is required";
+
+        if (Object.keys(newErrors).length > 0) {
+            setErrors(newErrors);
+            showToast("Please fill in all required fields", "error");
+            return;
+        }
+
+        setIsLoading(true);
+
+        try {
+            let imageUrl = "https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&q=80&w=1000"; // Default
+            let uploadedBlueprints = [];
+
+            // 1. Upload Cover Image if exists
+            if (coverImage) {
+                try {
+                    imageUrl = await uploadToCloudinary(coverImage);
+                } catch (err) {
+                    console.error("Cover image upload failed", err);
+                    showToast("Cover image upload failed, but continuing with project creation...", "error");
+                }
+            }
+
+            // 2. Upload Blueprint Files if exist
+            if (uploadedFiles.length > 0) {
+                try {
+                    const uploadedUrls = await uploadMultipleToCloudinary(uploadedFiles);
+                    uploadedBlueprints = uploadedFiles.map((file, index) => ({
+                        name: file.name || `Blueprint ${index + 1}`,
+                        url: uploadedUrls[index],
+                        originalUrl: uploadedUrls[index],
+                        type: file.type || 'application/pdf'
+                    }));
+                } catch (err) {
+                    console.error("Upload failed", err);
+                    showToast("File upload failed, but continuing with project creation...", "error");
+                }
+            }
+
+            // 3. Create Project
+            const projectPayload = {
+                ...formData,
+                blockMode,
+                image: imageUrl,
+                blueprints: uploadedBlueprints,
+                assignedPersonnel: selectedPersonnel,
+                siteSize: Number(formData.siteSize) || 0,
+                floors: Number(formData.floors) || 0,
+                budget: Number(formData.budget) || 0,
+                startDate: formData.startDate || null,
+                endDate: formData.endDate || null,
+            };
+
+            const response = await api.post('/projects', projectPayload);
+
+            if (response.status === 201) {
+                onCreate(response.data);
+                // Show success toast
+                showToast("Project created successfully!", "success");
+                onClose();
+                // Reset form
+                setFormData({
+                    title: '', client: '', address: '', siteSize: '', floors: '',
+                    type: 'Residential', budget: '', budgetUnit: 'Lakhs',
+                    startDate: null, endDate: null, manager: '', contractor: ''
+                });
+                setBlockMode('single');
+                setErrors({});
+                setUploadedFiles([]);
+                setCoverImage(null);
+                setCoverPreview(null);
+                setSelectedPersonnel([]);
+            }
+
+        } catch (error) {
+            console.error("Failed to create project:", error);
+            if (error.response && error.response.data && error.response.data.message) {
+                showToast(error.response.data.message, "error");
+            } else {
+                showToast("Failed to create project. Please try again.", "error");
+            }
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    // Helper function for budget preview (assuming it exists elsewhere or needs to be added)
+    const getBudgetPreview = () => {
+        if (!formData.budget) return '';
+        const budget = parseFloat(formData.budget);
+        if (isNaN(budget)) return '';
+
+        let displayValue = budget;
+        let unit = formData.budgetUnit;
+
+        if (unit === 'Lakhs') {
+            displayValue = budget * 100000;
+        } else if (unit === 'Crores') {
+            displayValue = budget * 10000000;
+        }
+
+        return `Approx. ₹${displayValue.toLocaleString('en-IN')}`;
+    };
+
+    // Placeholder for customStyles if it's meant to be defined
+    const customStyles = `
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+        }
+    `;
+
+
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm overflow-y-auto">
+            {ToastComponent}
+            <style>{customStyles}</style>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto no-scrollbar">
+
+                {/* Header */}
+                <div className="flex justify-between items-center p-6 border-b border-gray-100 sticky top-0 bg-white z-10 rounded-t-2xl">
+                    <div>
+                        <h2 className="text-lg font-semibold text-gray-900">Create New Project</h2>
+                        <p className="text-xs text-gray-400 mt-0.5">Enter details to initialize a new construction project.</p>
+                    </div>
+                    <button onClick={onClose} className="p-1.5 text-gray-300 hover:text-gray-500 hover:bg-gray-50 rounded-lg transition-colors">
+                        <X size={18} />
+                    </button>
+                </div>
+
+                <div className="p-8 space-y-8">
+
+                    {/* Project Identity */}
+                    <section>
+                        <h3 className="text-xs font-semibold text-gray-900 flex items-center gap-2 mb-4">
+                            <span className="p-1.5 bg-violet-50 text-violet-500 rounded-lg"><Building2 size={16} /></span>
+                            Project Identity
+                        </h3>
+
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-xs font-medium text-gray-500 mb-1.5">Project Name <span className="text-red-500">*</span></label>
+                                <input
+                                    type="text"
+                                    name="title"
+                                    value={formData.title}
+                                    onChange={handleChange}
+                                    placeholder="e.g. Skyline Towers Phase 1"
+                                    className={`w-full px-4 py-2.5 bg-gray-50 border rounded-lg text-sm focus:outline-none focus:ring-2 transition-all ${errors.title ? 'border-red-500 focus:ring-red-200' : 'border-gray-200 focus:border-gray-300 focus:ring-gray-300'}`}
+                                />
+                                {errors.title && <p className="mt-1 text-[11px] text-red-500">{errors.title}</p>}
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-500 mb-1.5">Client Name <span className="text-red-500">*</span></label>
+                                    <input
+                                        type="text"
+                                        name="client"
+                                        value={formData.client}
+                                        onChange={handleChange}
+                                        placeholder="e.g. Acme Development Corp"
+                                        className={`w-full px-4 py-2.5 bg-gray-50 border rounded-lg text-sm focus:outline-none focus:ring-2 transition-all placeholder:text-gray-300 ${errors.client ? 'border-red-500 focus:ring-red-200' : 'border-gray-200 focus:border-gray-300 focus:ring-gray-300'}`}
+                                    />
+                                    {errors.client && <p className="mt-1 text-[11px] text-red-500">{errors.client}</p>}
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-500 mb-1.5">Site Address <span className="text-red-500">*</span></label>
+                                    <input
+                                        type="text"
+                                        name="address"
+                                        value={formData.address}
+                                        onChange={handleChange}
+                                        placeholder="123 Construction Blvd"
+                                        className={`w-full px-4 py-2.5 bg-gray-50 border rounded-lg text-sm focus:outline-none focus:ring-2 transition-all placeholder:text-gray-300 ${errors.address ? 'border-red-500 focus:ring-red-200' : 'border-gray-200 focus:border-gray-300 focus:ring-gray-300'}`}
+                                    />
+                                    {errors.address && <p className="mt-1 text-[11px] text-red-500">{errors.address}</p>}
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-500 mb-1.5">Site Size (sq ft) <span className="text-red-500">*</span></label>
+                                    <input
+                                        type="number"
+                                        name="siteSize"
+                                        value={formData.siteSize}
+                                        onChange={handleChange}
+                                        min="0"
+                                        placeholder="e.g. 5000"
+                                        className={`w-full px-4 py-2.5 bg-gray-50 border rounded-lg text-sm focus:outline-none focus:ring-2 transition-all placeholder:text-gray-300 ${errors.siteSize ? 'border-red-500 focus:ring-red-200' : 'border-gray-200 focus:border-gray-300 focus:ring-gray-300'}`}
+                                    />
+                                    {errors.siteSize && <p className="mt-1 text-[11px] text-red-500">{errors.siteSize}</p>}
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-500 mb-1.5">Number of Floors <span className="text-red-500">*</span></label>
+                                    <input
+                                        type="number"
+                                        name="floors"
+                                        value={formData.floors}
+                                        onChange={handleChange}
+                                        min="0"
+                                        placeholder="e.g. 3"
+                                        className={`w-full px-4 py-2.5 bg-gray-50 border rounded-lg text-sm focus:outline-none focus:ring-2 transition-all placeholder:text-gray-300 ${errors.floors ? 'border-red-500 focus:ring-red-200' : 'border-gray-200 focus:border-gray-300 focus:ring-gray-300'}`}
+                                    />
+                                    {errors.floors && <p className="mt-1 text-[11px] text-red-500">{errors.floors}</p>}
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* Cover Image */}
+                    <section>
+                        <h3 className="text-xs font-semibold text-gray-900 flex items-center gap-2 mb-4">
+                            <span className="p-1.5 bg-violet-50 text-violet-500 rounded-lg"><ImagePlus size={16} /></span>
+                            Cover Image
+                        </h3>
+
+                        {coverPreview ? (
+                            <div className="relative rounded-xl overflow-hidden border border-gray-200 group">
+                                <img src={coverPreview} alt="Cover preview" className="w-full h-40 object-cover" />
+                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                    <button
+                                        type="button"
+                                        onClick={() => { setCoverImage(null); setCoverPreview(null); }}
+                                        className="px-3 py-1.5 bg-white rounded-lg text-sm font-medium text-gray-700 flex items-center gap-1.5 hover:bg-red-50 hover:text-red-600 transition-colors"
+                                    >
+                                        <Trash2 size={14} /> Remove
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div
+                                onClick={() => document.getElementById('coverImageUpload').click()}
+                                onDragOver={(e) => e.preventDefault()}
+                                onDrop={(e) => {
+                                    e.preventDefault();
+                                    const file = e.dataTransfer.files[0];
+                                    if (file && file.type.startsWith('image/')) {
+                                        setCoverImage(file);
+                                        setCoverPreview(URL.createObjectURL(file));
+                                    }
+                                }}
+                                className="border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center text-center transition-colors cursor-pointer group border-gray-200 hover:border-violet-300 hover:bg-violet-50/30"
+                            >
+                                <input
+                                    id="coverImageUpload"
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    onChange={(e) => {
+                                        const file = e.target.files[0];
+                                        if (file) {
+                                            setCoverImage(file);
+                                            setCoverPreview(URL.createObjectURL(file));
+                                        }
+                                    }}
+                                />
+                                <div className="w-10 h-10 rounded-full bg-gray-100 group-hover:bg-violet-100 flex items-center justify-center mb-2 transition-colors">
+                                    <ImagePlus size={20} className="text-gray-400 group-hover:text-violet-500 transition-colors" />
+                                </div>
+                                <p className="text-sm font-medium text-gray-500 group-hover:text-violet-600 transition-colors">Upload a cover image</p>
+                                <p className="text-xs text-gray-300 mt-1">PNG, JPG up to 10MB</p>
+                            </div>
+                        )}
+                    </section>
+
+                    {/* Project Type */}
+                    <section>
+                        <h3 className="text-xs font-semibold text-gray-900 flex items-center gap-2 mb-4">
+                            <span className="p-1.5 bg-violet-50 text-violet-500 rounded-lg"><Hammer size={16} /></span>
+                            Project Type
+                        </h3>
+
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <ProjectTypeCard
+                                icon={<Home size={24} />}
+                                title="Residential"
+                                subtitle="Single & Multi-family"
+                                selected={formData.type === 'Residential'}
+                                onClick={() => handleTypeSelect('Residential')}
+                            />
+                            <ProjectTypeCard
+                                icon={<Building2 size={24} />}
+                                title="Commercial"
+                                subtitle="Retail & Office"
+                                selected={formData.type === 'Commercial'}
+                                onClick={() => handleTypeSelect('Commercial')}
+                            />
+                            <ProjectTypeCard
+                                icon={<Hammer size={24} />}
+                                title="Renovation"
+                                subtitle="Remodel & Retrofit"
+                                selected={formData.type === 'Renovation'}
+                                onClick={() => handleTypeSelect('Renovation')}
+                            />
+                            <ProjectTypeCard
+                                icon={<Sofa size={24} />}
+                                title="Interior"
+                                subtitle="Design & Décor"
+                                selected={formData.type === 'Interior'}
+                                onClick={() => handleTypeSelect('Interior')}
+                            />
+                        </div>
+                    </section>
+
+                    {/* Budget & Timeline */}
+                    <section>
+                        <h3 className="text-xs font-semibold text-gray-900 flex items-center gap-2 mb-4">
+                            <span className="p-1.5 bg-violet-50 text-violet-500 rounded-lg"><Calendar size={16} /></span>
+                            Budget & Timeline
+                        </h3>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div>
+                                <label className="block text-xs font-medium text-gray-500 mb-1.5">Estimated Budget <span className="text-red-500">*</span></label>
+                                <div className="relative flex rounded-lg shadow-sm">
+                                    <div className="relative flex-grow focus-within:z-10">
+                                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                            <span className="text-gray-500 sm:text-sm">₹</span>
+                                        </div>
+                                        <input
+                                            type="number"
+                                            name="budget"
+                                            value={formData.budget}
+                                            onChange={handleChange}
+                                            min="0"
+                                            placeholder="0.00"
+                                            className={`focus:ring-2 block w-full pl-7 pr-12 sm:text-sm rounded-l-md py-2.5 border ${errors.budget ? 'border-red-500 focus:ring-red-200' : 'border-gray-300 focus:border-gray-400 focus:ring-gray-400'}`}
+                                        />
+                                    </div>
+                                    <div className="-ml-px relative">
+                                        <select
+                                            name="budgetUnit"
+                                            value={formData.budgetUnit}
+                                            onChange={handleChange}
+                                            className="focus:ring-gray-400 focus:border-gray-400 border-gray-300 rounded-r-md sm:text-sm py-2.5 pl-3 pr-7 border bg-gray-50 text-gray-700"
+                                        >
+                                            <option>Lakhs</option>
+                                            <option>Crores</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                {errors.budget && <p className="mt-1 text-[11px] text-red-500">{errors.budget}</p>}
+                                {formData.budget && !errors.budget && (
+                                    <p className="mt-1 text-xs text-violet-500 font-medium">
+                                        {getBudgetPreview()}
+                                    </p>
+                                )}
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium text-gray-500 mb-1.5">Target Start Date <span className="text-red-500">*</span></label>
+                                <DatePicker
+                                    selected={formData.startDate}
+                                    onChange={(date) => handleDateChange(date, 'startDate')}
+                                    dateFormat="dd/MM/yyyy"
+                                    placeholderText="dd/mm/yyyy"
+                                    showYearDropdown
+                                    showMonthDropdown
+                                    dropdownMode="select"
+                                    className={`w-full px-4 py-2.5 bg-gray-50 border rounded-lg text-sm focus:outline-none focus:ring-2 transition-all text-gray-500 ${errors.startDate ? 'border-red-500 focus:ring-red-200' : 'border-gray-200 focus:border-gray-300 focus:ring-gray-300'}`}
+                                />
+                                {errors.startDate && <p className="mt-1 text-[11px] text-red-500">{errors.startDate}</p>}
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium text-gray-500 mb-1.5">Target Completion <span className="text-red-500">*</span></label>
+                                <DatePicker
+                                    selected={formData.endDate}
+                                    onChange={(date) => handleDateChange(date, 'endDate')}
+                                    dateFormat="dd/MM/yyyy"
+                                    placeholderText="dd/mm/yyyy"
+                                    showYearDropdown
+                                    showMonthDropdown
+                                    dropdownMode="select"
+                                    className={`w-full px-4 py-2.5 bg-gray-50 border rounded-lg text-sm focus:outline-none focus:ring-2 transition-all text-gray-500 ${errors.endDate ? 'border-red-500 focus:ring-red-200' : 'border-gray-200 focus:border-gray-300 focus:ring-gray-300'}`}
+                                />
+                                {errors.endDate && <p className="mt-1 text-[11px] text-red-500">{errors.endDate}</p>}
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* Team Assignment */}
+                    <section>
+                        <h3 className="text-xs font-semibold text-gray-900 flex items-center gap-2 mb-4">
+                            <span className="p-1.5 bg-violet-50 text-violet-500 rounded-lg"><UsersIcon size={16} /></span>
+                            Team Assignment
+                        </h3>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-xs font-medium text-gray-500 mb-1.5">Site Manager <span className="text-red-500">*</span></label>
+                                <select
+                                    name="manager"
+                                    value={formData.manager}
+                                    onChange={handleChange}
+                                    className={`w-full px-4 py-2.5 bg-gray-50 border rounded-lg text-sm focus:outline-none focus:ring-2 transition-all appearance-none ${!formData.manager ? 'text-gray-300' : 'text-gray-900'} ${errors.manager ? 'border-red-500 focus:ring-red-200' : 'border-gray-200 focus:border-gray-300 focus:ring-gray-300'}`}
+                                >
+                                    <option value="" className="text-gray-300">Select a manager...</option>
+                                    {personnel.map(p => (
+                                        <option key={p._id} value={p.name} className="text-gray-900">{p.name} — {p.role || 'Team Member'}</option>
+                                    ))}
+                                </select>
+                                {errors.manager && <p className="mt-1 text-[11px] text-red-500">{errors.manager}</p>}
+                            </div>
+
+                            {/* Personnel Multi-Select */}
+                            <div>
+                                <label className="block text-xs font-medium text-gray-500 mb-1.5">
+                                    Assign Personnel to Project
+                                    <span className="ml-2 text-violet-500 font-semibold">
+                                        {selectedPersonnel.length > 0 ? `${selectedPersonnel.length} selected` : 'None selected'}
+                                    </span>
+                                </label>
+                                {personnel.length === 0 ? (
+                                    <p className="text-xs text-gray-400 italic py-2">No personnel found. Add team members first from the Personnel page.</p>
+                                ) : (
+                                    <div className="border border-gray-200 rounded-xl overflow-hidden max-h-52 overflow-y-auto">
+                                        {personnel.map(p => {
+                                            const isSelected = selectedPersonnel.includes(p._id);
+                                            return (
+                                                <div
+                                                    key={p._id}
+                                                    onClick={() => {
+                                                        setSelectedPersonnel(prev =>
+                                                            isSelected ? prev.filter(id => id !== p._id) : [...prev, p._id]
+                                                        );
+                                                    }}
+                                                    className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors border-b border-gray-50 last:border-0 ${
+                                                        isSelected ? 'bg-violet-50' : 'hover:bg-gray-50'
+                                                    }`}
+                                                >
+                                                    <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+                                                        isSelected ? 'bg-violet-500 border-violet-500' : 'border-gray-300'
+                                                    }`}>
+                                                        {isSelected && (
+                                                            <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
+                                                                <path d="M1 4L3.5 6.5L9 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                                                            </svg>
+                                                        )}
+                                                    </div>
+                                                    <img
+                                                        src={p.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.name)}&background=random&size=32`}
+                                                        alt={p.name}
+                                                        className="w-7 h-7 rounded-lg object-cover"
+                                                    />
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className={`text-xs font-medium truncate ${isSelected ? 'text-violet-800' : 'text-gray-800'}`}>{p.name}</p>
+                                                        <p className="text-[10px] text-gray-400 truncate">{p.role}</p>
+                                                    </div>
+                                                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                                                        p.status === 'On Site' ? 'bg-emerald-50 text-emerald-600' :
+                                                        p.status === 'Remote' ? 'bg-violet-50 text-violet-600' :
+                                                        p.status === 'On Leave' ? 'bg-amber-50 text-amber-600' :
+                                                        'bg-gray-100 text-gray-500'
+                                                    }`}>{p.status || 'On Site'}</span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* Project Structure */}
+                    <section>
+                        <h3 className="text-xs font-semibold text-gray-900 flex items-center gap-2 mb-4">
+                            <span className="p-1.5 bg-violet-50 text-violet-500 rounded-lg"><Layers size={16} /></span>
+                            Project Structure
+                        </h3>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div
+                                onClick={() => setBlockMode('single')}
+                                className={`relative p-4 rounded-xl border cursor-pointer transition-all ${blockMode === 'single' ? 'border-violet-400 bg-violet-50/30' : 'border-gray-100 hover:border-gray-200'}`}
+                            >
+                                {blockMode === 'single' && <div className="absolute top-3 right-3 text-violet-500"><CheckCircle2 size={16} /></div>}
+                                <div className={`mb-2 ${blockMode === 'single' ? 'text-violet-500' : 'text-gray-400'}`}><Building2 size={24} /></div>
+                                <div className="font-medium text-gray-800 text-xs">Single Building</div>
+                                <div className="text-[11px] text-gray-400 mt-0.5">One unit — direct access to blueprints, logs &amp; inventory</div>
+                            </div>
+                            <div
+                                onClick={() => setBlockMode('multi')}
+                                className={`relative p-4 rounded-xl border cursor-pointer transition-all ${blockMode === 'multi' ? 'border-violet-400 bg-violet-50/30' : 'border-gray-100 hover:border-gray-200'}`}
+                            >
+                                {blockMode === 'multi' && <div className="absolute top-3 right-3 text-violet-500"><CheckCircle2 size={16} /></div>}
+                                <div className={`mb-2 ${blockMode === 'multi' ? 'text-violet-500' : 'text-gray-400'}`}><Layers size={24} /></div>
+                                <div className="font-medium text-gray-800 text-xs">Multiple Blocks</div>
+                                <div className="text-[11px] text-gray-400 mt-0.5">Towers, wings or phases — each tracked independently</div>
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* Documents */}
+                    <section>
+                        <h3 className="text-xs font-semibold text-gray-900 flex items-center gap-2 mb-4">
+                            <span className="p-1.5 bg-violet-50 text-violet-500 rounded-lg"><Upload size={16} /></span>
+                            Documents
+                        </h3>
+
+                        <div
+                            onDrop={handleDrop}
+                            onDragOver={handleDragOver}
+                            onClick={() => document.getElementById('fileUpload').click()}
+                            className="border-2 border-dashed rounded-xl p-8 flex flex-col items-center justify-center text-center transition-colors cursor-pointer group border-gray-200 hover:bg-gray-50 mb-4"
+                        >
+                            <input
+                                id="fileUpload"
+                                type="file"
+                                className="hidden"
+                                multiple
+                                onChange={handleFileChange}
+                            />
+
+                            <div className="w-10 h-10 bg-violet-50 rounded-xl flex items-center justify-center mb-3 group-hover:scale-105 transition-transform">
+                                <Upload size={16} className="text-violet-500" />
+                            </div>
+                            <p className="text-sm font-medium text-gray-600"><span className="text-violet-500">Click to upload</span> or drag and drop</p>
+                            <p className="text-[11px] text-gray-400 mt-1">Blueprints, Permits, Site Plans (PDF, DWG up to 50MB)</p>
+                        </div>
+
+                        {/* File List */}
+                        {uploadedFiles.length > 0 && (
+                            <div className="space-y-2">
+                                {uploadedFiles.map((file, index) => (
+                                    <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-100">
+                                        <div className="flex items-center gap-3">
+                                            <div className="p-2 bg-violet-50 text-violet-500 rounded-lg">
+                                                <FileText size={14} />
+                                            </div>
+                                            <div>
+                                                <p className="text-xs font-medium text-gray-700 line-clamp-1">{file.name}</p>
+                                                <p className="text-[11px] text-gray-400">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={() => removeFile(index)}
+                                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </section>
+
+                </div>
+
+                {/* Footer */}
+                <div className="p-5 border-t border-gray-100 flex justify-end gap-3 bg-gray-50/50 rounded-b-2xl">
+                    <button onClick={onClose} className="px-4 py-2 rounded-lg text-xs font-medium text-gray-500 hover:bg-gray-100 transition-colors">
+                        Cancel
+                    </button>
+                    <button
+                        onClick={handleSubmit}
+                        disabled={isLoading}
+                        className="px-5 py-2 rounded-lg text-xs font-medium text-white bg-[#1a1d2e] hover:bg-[#252840] transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {isLoading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                        {isLoading ? 'Creating...' : 'Create Project'}
+                    </button>
+                </div>
+
+            </div>
+        </div>
+    );
+};
+
+// Sub-components
+const ProjectTypeCard = ({ icon, title, subtitle, selected, onClick }) => (
+    <div
+        onClick={onClick}
+        className={`relative p-4 rounded-xl border cursor-pointer transition-all ${selected ? 'border-violet-400 bg-violet-50/30' : 'border-gray-100 hover:border-gray-200'}`}
+    >
+        {selected && <div className="absolute top-3 right-3 text-violet-500"><CheckCircle2 size={16} /></div>}
+        <div className={`mb-2 ${selected ? 'text-violet-500' : 'text-gray-400'}`}>{icon}</div>
+        <div className="font-medium text-gray-800 text-xs">{title}</div>
+        <div className="text-[11px] text-gray-400 mt-0.5">{subtitle}</div>
+    </div>
+);
+
+// Helper icon
+const UsersIcon = ({ size }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><line x1="19" x2="19" y1="8" y2="14" /><line x1="22" x2="16" y1="11" y2="11" />
+    </svg>
+);
+
+export default CreateProjectModal;
