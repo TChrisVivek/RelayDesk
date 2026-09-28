@@ -82,11 +82,16 @@ api.interceptors.response.use(
                     else if (action === 'expenses') data = mockExpenses;
                     else if (action === 'blocks') {
                         const blockId = parts[pIdx + 3];
+                        const blockAction = parts[pIdx + 4];
                         const blocks = [
                             { _id: 'b1', name: 'Tower A - North Wing', description: 'Primary residential tower', status: 'In Progress', progress: 45 },
                             { _id: 'b2', name: 'Tower B - South Wing', description: 'Secondary residential tower', status: 'Planning', progress: 0 }
                         ];
-                        if (blockId) {
+                        if (blockAction === 'daily-logs') {
+                            data = { projectPhase: 'Execution Phase', lastUpdated: 'Just now', logs: [] };
+                        } else if (blockAction === 'blueprints') {
+                            data = mockBlueprints;
+                        } else if (blockId) {
                             data = blocks.find(b => b._id === blockId) || blocks[0];
                         } else {
                             data = blocks;
